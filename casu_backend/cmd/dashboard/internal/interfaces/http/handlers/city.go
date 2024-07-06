@@ -1,0 +1,201 @@
+package handlers
+
+import (
+	"fmt"
+	"github.com/hsynrtn/dashboard-management/cmd/dashboard/internal/domain/city"
+	"github.com/hsynrtn/dashboard-management/cmd/dashboard/internal/infrastructure/persistence"
+	"github.com/hsynrtn/dashboard-management/pkg/commandbus"
+	apperrors "github.com/hsynrtn/dashboard-management/pkg/errors"
+	httpjson "github.com/hsynrtn/dashboard-management/pkg/http/response/json"
+	"github.com/vardius/gorouter/v4/context"
+	"io/ioutil"
+	"math"
+	"net/http"
+	"strconv"
+)
+
+// BuildListClientsHandler lists client credentials by user ID
+func BuildListCitiesHandler(repository persistence.CityRepository) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) error {
+		pageInt, _ := strconv.ParseInt(r.URL.Query().Get("page"), 10, 32)
+		limitInt, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 32)
+		page := int64(math.Max(float64(pageInt), 1))
+		limit := int64(math.Max(float64(limitInt), 10))
+
+		totalUsers, err := repository.Count(r.Context())
+		if err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		offset := (page * limit) - limit
+
+		paginatedList := struct {
+			Cities []persistence.City `json:"data"`
+			Page   int64              `json:"page"`
+			Limit  int64              `json:"limit"`
+			Total  int64              `json:"total"`
+		}{
+			Page:  page,
+			Limit: limit,
+			Total: totalUsers,
+		}
+
+		if totalUsers < 1 || offset > (totalUsers-1) {
+			if err := httpjson.JSON(r.Context(), w, http.StatusOK, paginatedList); err != nil {
+				return apperrors.Wrap(err)
+			}
+			return nil
+		}
+
+		paginatedList.Cities, err = repository.FindAll(r.Context(), limit, offset)
+		if err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		if err := httpjson.JSON(r.Context(), w, http.StatusOK, paginatedList); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return httpjson.HandlerFunc(fn)
+}
+
+func BuildGetAcceptedHandler(repository persistence.CityRepository) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) error {
+		pageInt, _ := strconv.ParseInt(r.URL.Query().Get("page"), 10, 32)
+		limitInt, _ := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 32)
+		page := int64(math.Max(float64(pageInt), 1))
+		limit := int64(math.Max(float64(limitInt), 10))
+
+		totalUsers, err := repository.Count(r.Context())
+		if err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		offset := (page * limit) - limit
+
+		paginatedList := struct {
+			Cities []persistence.City `json:"data"`
+			Page   int64              `json:"page"`
+			Limit  int64              `json:"limit"`
+			Total  int64              `json:"total"`
+		}{
+			Page:  page,
+			Limit: limit,
+			Total: totalUsers,
+		}
+
+		if totalUsers < 1 || offset > (totalUsers-1) {
+			if err := httpjson.JSON(r.Context(), w, http.StatusOK, paginatedList); err != nil {
+				return apperrors.Wrap(err)
+			}
+			return nil
+		}
+		paginatedList.Cities, err = repository.FindAllAccepted(r.Context(), r.URL.Query().Get("username"))
+		if err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		if err := httpjson.JSON(r.Context(), w, http.StatusOK, paginatedList); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return httpjson.HandlerFunc(fn)
+}
+
+// BuildGetUserHandler
+func BuildGetCityHandler(repository persistence.CityRepository) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) error {
+		params, ok := context.Parameters(r.Context())
+		if !ok {
+			return apperrors.Wrap(ErrInvalidURLParams)
+		}
+
+		u, err := repository.Get(r.Context(), params.Value("id"))
+		if err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		if err := httpjson.JSON(r.Context(), w, http.StatusOK, u); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return httpjson.HandlerFunc(fn)
+}
+
+func BuildAcceptHandler(repository persistence.CityRepository) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) error {
+		if err := repository.Accept(r.Context(), r.FormValue("id"), r.FormValue("username")); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		if err := httpjson.JSON(r.Context(), w, http.StatusOK, nil); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return httpjson.HandlerFunc(fn)
+}
+
+func BuildRemoveHandler(repository persistence.CityRepository) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) error {
+		if err := repository.Remove(r.Context(), r.FormValue("id"), r.FormValue("username")); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		if err := httpjson.JSON(r.Context(), w, http.StatusOK, nil); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return httpjson.HandlerFunc(fn)
+}
+
+// BuildUserCommandDispatchHandler
+func BuildCityCommandDispatchHandler(cb commandbus.CommandBus) http.Handler {
+	fn := func(w http.ResponseWriter, r *http.Request) error {
+		if r.Body == nil {
+			return fmt.Errorf("%w: %v", apperrors.ErrInvalid, ErrEmptyRequestBody)
+		}
+
+		params, ok := context.Parameters(r.Context())
+		if !ok {
+			return fmt.Errorf("%w: %v", apperrors.ErrInvalid, ErrInvalidURLParams)
+		}
+
+		defer r.Body.Close()
+		body, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		c, err := city.NewCommandFromPayload(params.Value("command"), body)
+		if err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		if err := cb.Publish(r.Context(), c); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		if err := httpjson.JSON(r.Context(), w, http.StatusCreated, nil); err != nil {
+			return apperrors.Wrap(err)
+		}
+
+		return nil
+	}
+
+	return httpjson.HandlerFunc(fn)
+}
